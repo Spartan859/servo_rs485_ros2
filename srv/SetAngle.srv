@@ -1,0 +1,4 @@
+float64 degree
+int32 time_ms
+---
+bool success
