@@ -21,36 +21,36 @@ def generate_launch_description():
         ]
     )
 
-    # 3. 定义 Service 调用函数 (使用 OpaqueFunction 保证在运行时执行)
-    def call_service_commands(context):
-        # 确保在启动命令中替换了正确的 Service 类型
+    # 3. 定义 get_angle 服务定时调用
+    get_angle_call = launch.actions.ExecuteProcess(
+        cmd=['ros2', 'service', 'call', '/get_angle', 'servo_rs485_ros2/srv/GetAngle', '{}'],
+        output='screen'
+    )
+
+    # 4. 100Hz定时调用 get_angle 服务
+    get_angle_timer = TimerAction(
+        period=0.01,  # 100Hz
+        actions=[get_angle_call]
+    )
+
+    # 5. 其他服务只在启动时调用一次
+    def call_once_services(context):
         ping_servo_call = launch.actions.ExecuteProcess(
             cmd=['ros2', 'service', 'call', '/ping_servo', 'servo_rs485_ros2/srv/PingServo', '{}'],
             output='screen'
         )
-        
         set_angle_call = launch.actions.ExecuteProcess(
             cmd=['ros2', 'service', 'call', '/set_angle', 'servo_rs485_ros2/srv/SetAngle', TextSubstitution(text='{degree: 5.0, time_ms: 500}')],
             output='screen'
         )
-        
-        get_angle_call = launch.actions.ExecuteProcess(
-            cmd=['ros2', 'service', 'call', '/get_angle', 'servo_rs485_ros2/srv/GetAngle', '{}'],
-            output='screen'
-        )
-        
-        return [ping_servo_call, set_angle_call, get_angle_call]
+        return [ping_servo_call, set_angle_call]
 
-    # 4. 延迟调用 Service (给 servo_node 启动时间)
-    service_calls_timer = TimerAction(
-        period=5.0,  # 延迟 5 秒
-        actions=[
-            OpaqueFunction(function=call_service_commands)
-        ]
+    once_timer = TimerAction(
+        period=5.0,
+        actions=[OpaqueFunction(function=call_once_services)]
     )
 
     return launch.LaunchDescription([
-        # 允许用户通过命令行覆盖参数
         launch.actions.DeclareLaunchArgument(
             'port',
             default_value='/dev/ttyUSB1',
@@ -62,5 +62,6 @@ def generate_launch_description():
             description='Default Servo ID'
         ),
         servo_node,
-        service_calls_timer,
+        once_timer,
+        get_angle_timer,
     ])
