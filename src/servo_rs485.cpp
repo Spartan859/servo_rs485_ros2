@@ -129,41 +129,6 @@ void Servo::setAngle(double degree, int time_ms) {
     sendCommand(cmd, 11, resp, resp_len);
 }
 
-void Servo::setAngleWithSpeed(double target_degree, double speed_dps, int step_interval_ms) {
-    // 1. 读取当前角度
-    double current_deg = currentDegree();
-    if (std::isnan(current_deg)) {
-        current_deg = last_angle_;
-    }
-
-    // 2. 计算角度差与总时间
-    double angle_diff = target_degree - current_deg;
-    if (std::abs(angle_diff) < 0.5) {
-        // 差异过小，直接到位
-        setAngle(target_degree, step_interval_ms);
-        return;
-    }
-
-    double total_time_s = std::abs(angle_diff) / speed_dps;
-    int total_time_ms = static_cast<int>(total_time_s * 1000);
-
-    // 3. 拆分成若干步
-    int num_steps = std::max(1, total_time_ms / step_interval_ms);
-    double step_deg = angle_diff / num_steps;
-
-    // 4. 循环执行每步
-    for (int i = 1; i <= num_steps; ++i) {
-        double intermediate_deg = current_deg + step_deg * i;
-        setAngle(intermediate_deg, step_interval_ms);
-        std::this_thread::sleep_for(std::chrono::milliseconds(step_interval_ms));
-    }
-
-    // 5. 最后确保精确到位
-    setAngle(target_degree, step_interval_ms);
-    std::this_thread::sleep_for(std::chrono::milliseconds(step_interval_ms));
-    last_angle_ = target_degree;
-}
-
 double Servo::getAngle() {
     uint8_t cmd[8];
     cmd[0] = HEADER1;

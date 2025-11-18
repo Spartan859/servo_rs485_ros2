@@ -16,7 +16,6 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/PingServo.srv"
   "srv/SetAngle.srv"
   "srv/GetAngle.srv"
-  "srv/SetAngleWithSpeed.srv"
   DEPENDENCIES rclcpp std_msgs
 )
 

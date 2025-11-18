@@ -7,7 +7,6 @@ public:
     Servo(const std::string& port, int servo_id, int baudrate, double timeout);
     bool ping();
     void setAngle(double degree, int time_ms = 0);
-    void setAngleWithSpeed(double target_degree, double speed_dps = 30.0, int step_interval_ms = 50);
     double getAngle();
     double currentDegree();
 private:
