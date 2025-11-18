@@ -1,0 +1,5 @@
+float64 target_degree
+float64 speed_dps
+int32 step_interval_ms
+---
+bool success

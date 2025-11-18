@@ -3,7 +3,7 @@
 #include "servo_rs485_ros2/servo_rs485.hpp"
 #include "servo_rs485_ros2/srv/ping_servo.hpp"
 #include "servo_rs485_ros2/srv/set_angle.hpp"
-#include "servo_rs485_ros2/srv/get_angle.hpp"
+#include "servo_rs485_ros2/srv/set_angle_with_speed.hpp"
 #include <memory>
 
 class ServoNode : public rclcpp::Node {
@@ -18,8 +18,8 @@ public:
             "ping_servo", std::bind(&ServoNode::ping_callback, this, std::placeholders::_1, std::placeholders::_2));
         srv_set_angle_ = this->create_service<servo_rs485_ros2::srv::SetAngle>(
             "set_angle", std::bind(&ServoNode::set_angle_callback, this, std::placeholders::_1, std::placeholders::_2));
-        srv_get_angle_ = this->create_service<servo_rs485_ros2::srv::GetAngle>(
-            "get_angle", std::bind(&ServoNode::get_angle_callback, this, std::placeholders::_1, std::placeholders::_2));
+        srv_set_angle_with_speed_ = this->create_service<servo_rs485_ros2::srv::SetAngleWithSpeed>(
+            "set_angle_with_speed", std::bind(&ServoNode::set_angle_with_speed_callback, this, std::placeholders::_1, std::placeholders::_2));
         angle_pub_ = this->create_publisher<std_msgs::msg::Float64>("servo_angle", 10);
         timer_ = this->create_wall_timer(std::chrono::milliseconds(500), std::bind(&ServoNode::publish_angle, this));
     }
@@ -39,6 +39,11 @@ private:
         res->degree = deg;
         res->success = true;
     }
+    void set_angle_with_speed_callback(const std::shared_ptr<servo_rs485_ros2::srv::SetAngleWithSpeed::Request> req,
+                                      std::shared_ptr<servo_rs485_ros2::srv::SetAngleWithSpeed::Response> res) {
+        servo_->setAngleWithSpeed(req->target_degree, req->speed_dps, req->step_interval_ms);
+        res->success = true;
+    }
     void publish_angle() {
         double deg = servo_->currentDegree();
         auto msg = std_msgs::msg::Float64();
@@ -52,6 +57,7 @@ private:
     std::shared_ptr<Servo> servo_;
     rclcpp::Service<servo_rs485_ros2::srv::PingServo>::SharedPtr srv_ping_;
     rclcpp::Service<servo_rs485_ros2::srv::SetAngle>::SharedPtr srv_set_angle_;
+    rclcpp::Service<servo_rs485_ros2::srv::SetAngleWithSpeed>::SharedPtr srv_set_angle_with_speed_;
     rclcpp::Service<servo_rs485_ros2::srv::GetAngle>::SharedPtr srv_get_angle_;
     rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr angle_pub_;
     rclcpp::TimerBase::SharedPtr timer_;
