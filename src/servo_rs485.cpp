@@ -61,6 +61,9 @@ uint8_t Servo::calculateChecksum(const uint8_t* data, size_t len) {
 
 bool Servo::sendCommand(const uint8_t* data, size_t len, uint8_t* response, size_t& resp_len) {
     if (fd_ < 0) return false;
+    std::lock_guard<std::mutex> lock(io_mutex_);
+    // 清理可能的残留输入，避免前一条指令的回响干扰
+    tcflush(fd_, TCIFLUSH);
     write(fd_, data, len);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     resp_len = read(fd_, response, 32);

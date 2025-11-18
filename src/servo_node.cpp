@@ -26,7 +26,7 @@ public:
         srv_set_angle_speed_ = this->create_service<servo_rs485_ros2::srv::SetAngleWithSpeed>(
             "set_angle_with_speed", std::bind(&ServoNode::set_angle_with_speed_callback, this, std::placeholders::_1, std::placeholders::_2));
         angle_pub_ = this->create_publisher<std_msgs::msg::Float64>("servo_angle", 10);
-        timer_ = this->create_wall_timer(std::chrono::milliseconds(500), std::bind(&ServoNode::publish_angle, this));
+        timer_ = this->create_wall_timer(std::chrono::milliseconds(100), std::bind(&ServoNode::publish_angle, this));
     }
     ~ServoNode() override {
         cancel_.store(true);
@@ -64,7 +64,13 @@ private:
         double speed = req->speed_dps;
         int step = req->step_interval_ms;
         worker_ = std::thread([this, degree, speed, step]() {
-            servo_->setAngleWithSpeed(degree, speed, step, &cancel_);
+            try {
+                servo_->setAngleWithSpeed(degree, speed, step, &cancel_);
+            } catch (const std::exception& e) {
+                RCLCPP_ERROR(this->get_logger(), "Worker thread exception: %s", e.what());
+            } catch (...) {
+                RCLCPP_ERROR(this->get_logger(), "Worker thread unknown exception");
+            }
             moving_.store(false);
         });
         res->success = true;

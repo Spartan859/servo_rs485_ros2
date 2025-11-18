@@ -2,6 +2,7 @@
 #include <string>
 #include <cstdint>
 #include <atomic>
+#include <mutex>
 
 class Servo {
 public:
@@ -18,6 +19,7 @@ private:
     int baudrate_;
     double timeout_;
     double last_angle_;
+    mutable std::mutex io_mutex_;
     bool openPort();
     void closePort();
     bool sendCommand(const uint8_t* data, size_t len, uint8_t* response, size_t& resp_len);
