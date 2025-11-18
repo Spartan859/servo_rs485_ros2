@@ -176,6 +176,35 @@ double Servo::currentDegree() {
     return getAngle();
 }
 
+void Servo::setAngleWithSpeed(double target_degree, double speed_dps, int step_interval_ms) {
+    if (speed_dps <= 0.0) { // fallback: direct set
+        setAngle(target_degree, step_interval_ms);
+        last_angle_ = target_degree;
+        return;
+    }
+    if (step_interval_ms < 1) step_interval_ms = 10;
+    double current_deg = currentDegree();
+    double angle_diff = target_degree - current_deg;
+    if (std::abs(angle_diff) < 0.5) { // small diff direct
+        setAngle(target_degree, step_interval_ms);
+        last_angle_ = target_degree;
+        return;
+    }
+    double total_time_s = std::abs(angle_diff) / speed_dps;
+    int total_time_ms = static_cast<int>(total_time_s * 1000.0);
+    int num_steps = std::max(1, total_time_ms / step_interval_ms);
+    double step_deg = angle_diff / static_cast<double>(num_steps);
+    for (int i = 1; i <= num_steps; ++i) {
+        double intermediate_deg = current_deg + step_deg * i;
+        setAngle(intermediate_deg, step_interval_ms);
+        std::this_thread::sleep_for(std::chrono::milliseconds(step_interval_ms));
+    }
+    // ensure final
+    setAngle(target_degree, step_interval_ms);
+    std::this_thread::sleep_for(std::chrono::milliseconds(step_interval_ms));
+    last_angle_ = target_degree;
+}
+
 int Servo::degreeToPosition(double degree) {
     degree = std::max(std::min(degree, SERVO_MAX_DEGREE), SERVO_MIN_DEGREE);
     double pos_range = SERVO_MAX_POSITION - SERVO_MIN_POSITION;

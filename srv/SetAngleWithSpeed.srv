@@ -1,0 +1,5 @@
+float64 degree          # 目标角度 (deg)
+float64 speed_dps       # 期望转动速度 (度/秒); <=0 则直接跳到目标
+int32 step_interval_ms  # 每步间隔毫秒 (建议 30~100ms); <1 自动提升到10
+---
+bool success            # 是否成功开始或完成该动作
