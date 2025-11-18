@@ -28,6 +28,12 @@ public:
         angle_pub_ = this->create_publisher<std_msgs::msg::Float64>("servo_angle", 10);
         timer_ = this->create_wall_timer(std::chrono::milliseconds(500), std::bind(&ServoNode::publish_angle, this));
     }
+    ~ServoNode() override {
+        cancel_.store(true);
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+    }
 private:
     void ping_callback(const std::shared_ptr<servo_rs485_ros2::srv::PingServo::Request> req,
                       std::shared_ptr<servo_rs485_ros2::srv::PingServo::Response> res) {
@@ -46,19 +52,18 @@ private:
     }
     void set_angle_with_speed_callback(const std::shared_ptr<servo_rs485_ros2::srv::SetAngleWithSpeed::Request> req,
                                        std::shared_ptr<servo_rs485_ros2::srv::SetAngleWithSpeed::Response> res) {
-        // Preempt: cancel previous motion if running
-        if (moving_.load()) {
-            cancel_.store(true);
-            if (worker_.joinable()) worker_.join();
-            moving_.store(false);
+        // Preempt: cancel previous motion and join any running worker
+        cancel_.store(true);
+        if (worker_.joinable()) {
+            worker_.join();
         }
+        moving_.store(false);
         cancel_.store(false);
         moving_.store(true);
         double degree = req->degree;
         double speed = req->speed_dps;
         int step = req->step_interval_ms;
-        auto self = this->shared_from_this();
-        worker_ = std::thread([this, self, degree, speed, step]() {
+        worker_ = std::thread([this, degree, speed, step]() {
             servo_->setAngleWithSpeed(degree, speed, step, &cancel_);
             moving_.store(false);
         });
