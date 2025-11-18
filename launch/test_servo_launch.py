@@ -40,7 +40,7 @@ def generate_launch_description():
             output='screen'
         )
         set_angle_call = launch.actions.ExecuteProcess(
-            cmd=['ros2', 'service', 'call', '/set_angle', 'servo_rs485_ros2/srv/SetAngle', TextSubstitution(text='{degree: 5.0, time_ms: 500}')],
+            cmd=['ros2', 'service', 'call', '/set_angle', 'servo_rs485_ros2/srv/SetAngle', TextSubstitution(text='{degree: 8.0, time_ms: 500}')],
             output='screen'
         )
         return [ping_servo_call, set_angle_call]
