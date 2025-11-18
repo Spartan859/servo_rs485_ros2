@@ -176,7 +176,7 @@ double Servo::currentDegree() {
     return getAngle();
 }
 
-void Servo::setAngleWithSpeed(double target_degree, double speed_dps, int step_interval_ms) {
+void Servo::setAngleWithSpeed(double target_degree, double speed_dps, int step_interval_ms, std::atomic<bool>* cancel) {
     if (speed_dps <= 0.0) { // fallback: direct set
         setAngle(target_degree, step_interval_ms);
         last_angle_ = target_degree;
@@ -195,11 +195,18 @@ void Servo::setAngleWithSpeed(double target_degree, double speed_dps, int step_i
     int num_steps = std::max(1, total_time_ms / step_interval_ms);
     double step_deg = angle_diff / static_cast<double>(num_steps);
     for (int i = 1; i <= num_steps; ++i) {
+        if (cancel && cancel->load()) {
+            // cancelled by caller, stop early
+            return;
+        }
         double intermediate_deg = current_deg + step_deg * i;
         setAngle(intermediate_deg, step_interval_ms);
         std::this_thread::sleep_for(std::chrono::milliseconds(step_interval_ms));
     }
     // ensure final
+    if (cancel && cancel->load()) {
+        return;
+    }
     setAngle(target_degree, step_interval_ms);
     std::this_thread::sleep_for(std::chrono::milliseconds(step_interval_ms));
     last_angle_ = target_degree;

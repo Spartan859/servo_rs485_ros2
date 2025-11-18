@@ -6,6 +6,8 @@
 #include "servo_rs485_ros2/srv/get_angle.hpp"
 #include "servo_rs485_ros2/srv/set_angle_with_speed.hpp"
 #include <memory>
+#include <atomic>
+#include <thread>
 
 class ServoNode : public rclcpp::Node {
 public:
@@ -44,7 +46,22 @@ private:
     }
     void set_angle_with_speed_callback(const std::shared_ptr<servo_rs485_ros2::srv::SetAngleWithSpeed::Request> req,
                                        std::shared_ptr<servo_rs485_ros2::srv::SetAngleWithSpeed::Response> res) {
-        servo_->setAngleWithSpeed(req->degree, req->speed_dps, req->step_interval_ms);
+        // Preempt: cancel previous motion if running
+        if (moving_.load()) {
+            cancel_.store(true);
+            if (worker_.joinable()) worker_.join();
+            moving_.store(false);
+        }
+        cancel_.store(false);
+        moving_.store(true);
+        double degree = req->degree;
+        double speed = req->speed_dps;
+        int step = req->step_interval_ms;
+        auto self = this->shared_from_this();
+        worker_ = std::thread([this, self, degree, speed, step]() {
+            servo_->setAngleWithSpeed(degree, speed, step, &cancel_);
+            moving_.store(false);
+        });
         res->success = true;
     }
     void publish_angle() {
@@ -64,6 +81,9 @@ private:
     rclcpp::Service<servo_rs485_ros2::srv::SetAngleWithSpeed>::SharedPtr srv_set_angle_speed_;
     rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr angle_pub_;
     rclcpp::TimerBase::SharedPtr timer_;
+    std::atomic<bool> moving_{false};
+    std::thread worker_;
+    std::atomic<bool> cancel_{false};
 };
 
 int main(int argc, char* argv[]) {
