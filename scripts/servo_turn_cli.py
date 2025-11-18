@@ -70,9 +70,9 @@ def main(argv: Optional[list] = None):
     parser.add_argument('--step', type=float, default=10.0, help='Step degrees per left/right command')
     parser.add_argument('--speed', type=float, default=2.0, help='Turning speed in deg/s')
     parser.add_argument('--interval', type=int, default=1000, help='Step interval ms (granularity of smooth move)')
-    parser.add_argument('--init-target', type=float, default=0.0, help='Initial absolute target angle in degrees')
-    parser.add_argument('--min-deg', type=float, default=-135.0, help='Minimum allowed degree')
-    parser.add_argument('--max-deg', type=float, default=135.0, help='Maximum allowed degree')
+    parser.add_argument('--init-target', type=float, default=8.0, help='Initial absolute target angle in degrees')
+    parser.add_argument('--min-deg', type=float, default=-30, help='Minimum allowed degree')
+    parser.add_argument('--max-deg', type=float, default=30, help='Maximum allowed degree')
     parser.add_argument('--once', choices=['left', 'right', 'center'], help='Send a single command then exit')
 
     args = parser.parse_args(argv)
@@ -87,6 +87,8 @@ def main(argv: Optional[list] = None):
         min_deg=args.min_deg,
         max_deg=args.max_deg,
     )
+    
+    node.set_target(args.init_target)
 
     try:
         if args.once:
@@ -95,7 +97,7 @@ def main(argv: Optional[list] = None):
             elif args.once == 'right':
                 node.right()
             elif args.once == 'center':
-                node.set_target(0.0)
+                node.set_target(args.init_target)
         else:
             print("\nControls: l=left  r=right  c=center  q=quit\n")
             while rclpy.ok():
@@ -105,7 +107,7 @@ def main(argv: Optional[list] = None):
                 elif ch == 'r':
                     node.right()
                 elif ch == 'c':
-                    node.set_target(0.0)
+                    node.set_target(args.init_target)
                 elif ch == 'q':
                     break
                 else:

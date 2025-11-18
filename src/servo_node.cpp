@@ -26,7 +26,7 @@ public:
         srv_set_angle_speed_ = this->create_service<servo_rs485_ros2::srv::SetAngleWithSpeed>(
             "set_angle_with_speed", std::bind(&ServoNode::set_angle_with_speed_callback, this, std::placeholders::_1, std::placeholders::_2));
         angle_pub_ = this->create_publisher<std_msgs::msg::Float64>("servo_angle", 10);
-        timer_ = this->create_wall_timer(std::chrono::milliseconds(100), std::bind(&ServoNode::publish_angle, this));
+        timer_ = this->create_wall_timer(std::chrono::milliseconds(30), std::bind(&ServoNode::publish_angle, this));
     }
     ~ServoNode() override {
         cancel_.store(true);
