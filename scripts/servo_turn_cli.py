@@ -11,15 +11,18 @@ from rclpy.executors import SingleThreadedExecutor
 from servo_rs485_ros2.srv import SetAngleWithSpeed
 from std_msgs.msg import String
 from flask import Flask, request, jsonify
+from rcl_interfaces.srv import SetParameters
+from rcl_interfaces.msg import Parameter, ParameterValue
+from rcl_interfaces.msg import ParameterType
 
 
 app = Flask(__name__)
-node_global: Optional[ServoTurnCLI] = None
+node_global: 'Optional[ServoTurnCLI]' = None
 
 
 class ServoTurnCLI(Node):
     def __init__(self, service_name: str, step_deg: float, speed_dps: float, step_interval_ms: int,
-                 init_target: float, min_deg: float, max_deg: float):
+                 init_target: float, min_deg: float, max_deg: float, march_speed: float):
         super().__init__('servo_turn_cli')
         self._srv_name = service_name
         self._client = self.create_client(SetAngleWithSpeed, self._srv_name)
@@ -29,6 +32,7 @@ class ServoTurnCLI(Node):
         self._target = float(init_target)
         self._min_deg = float(min_deg)
         self._max_deg = float(max_deg)
+        self._march_speed = float(march_speed)
 
         self.get_logger().info(f"Using service: {self._srv_name}")
         self.get_logger().info(f"Initial target: {self._target:.2f} deg  | step={self._step} deg  speed={self._speed} dps  interval={self._interval} ms")
@@ -36,6 +40,10 @@ class ServoTurnCLI(Node):
         # Subscribe to safety status
         self.safety_sub = self.create_subscription(String, 'safety/status', self._safety_callback, 10)
         self.safety_status = 'OK'
+        self.last_safety_status = 'OK'
+
+        # Parameter client for balance_controller
+        self.param_client = self.create_client(SetParameters, '/balance_controller/set_parameters')
 
     def _clamp(self, v: float) -> float:
         return max(self._min_deg, min(self._max_deg, v))
@@ -75,15 +83,44 @@ class ServoTurnCLI(Node):
 
     def _safety_callback(self, msg):
         self.safety_status = msg.data
+        if msg.data != self.last_safety_status:
+            self.last_safety_status = msg.data
+            if msg.data != 'OK':
+                self.set_stop()
+                self.get_logger().warn(f"检测到不安全状态: {msg.data}，已自动停止")
+
+    def _set_march_velocity(self, velocity: float):
+        if not self.param_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().error("Parameter service not available")
+            return False
+        req = SetParameters.Request()
+        param = Parameter()
+        param.name = 'march_velocity'
+        param.value = ParameterValue()
+        param.value.type = ParameterType.PARAMETER_DOUBLE
+        param.value.double_value = velocity
+        req.parameters = [param]
+        future = self.param_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=2.0)
+        if not future.done():
+            self.get_logger().error("Set parameter timeout")
+            return False
+        resp = future.result()
+        if resp.results[0].successful:
+            self.get_logger().info(f"Set march_velocity to {velocity}")
+            return True
+        else:
+            self.get_logger().error(f"Failed to set march_velocity: {resp.results[0].reason}")
+            return False
 
     def set_forward(self):
-        self.get_logger().info("前进")
+        self._set_march_velocity(self._march_speed)
 
     def set_backward(self):
-        self.get_logger().info("后退")
+        self._set_march_velocity(-self._march_speed)
 
     def set_stop(self):
-        self.get_logger().info("停止")
+        self._set_march_velocity(0.0)
 
 
 @app.route('/')
@@ -118,11 +155,7 @@ def move():
         return jsonify(status="error", message="node not ready")
     action = request.json.get('action')
     if action == 'forward':
-        if node_global.safety_status == 'OK':
-            node_global.set_forward()
-        else:
-            node_global.set_stop()
-            node_global.get_logger().warn(f"前进时检测到不安全状态: {node_global.safety_status}")
+        node_global.set_forward()
     elif action == 'backward':
         node_global.set_backward()
     elif action == 'stop':
@@ -143,6 +176,7 @@ def main(argv: Optional[list] = None):
     parser.add_argument('--init-target', type=float, default=8.0, help='Initial absolute target angle in degrees')
     parser.add_argument('--min-deg', type=float, default=-30, help='Minimum allowed degree')
     parser.add_argument('--max-deg', type=float, default=30, help='Maximum allowed degree')
+    parser.add_argument('--march-speed', type=float, default=5.0, help='March speed for forward/backward')
     parser.add_argument('--once', choices=['left', 'right', 'center'], help='Send a single command then exit')
 
     args = parser.parse_args(argv)
@@ -156,6 +190,7 @@ def main(argv: Optional[list] = None):
         init_target=args.init_target,
         min_deg=args.min_deg,
         max_deg=args.max_deg,
+        march_speed=args.march_speed,
     )
     
     global node_global
