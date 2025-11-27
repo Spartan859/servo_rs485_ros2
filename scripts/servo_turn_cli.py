@@ -9,6 +9,12 @@ from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 
 from servo_rs485_ros2.srv import SetAngleWithSpeed
+from std_msgs.msg import String
+from flask import Flask, request, jsonify
+
+
+app = Flask(__name__)
+node_global: Optional[ServoTurnCLI] = None
 
 
 class ServoTurnCLI(Node):
@@ -26,6 +32,10 @@ class ServoTurnCLI(Node):
 
         self.get_logger().info(f"Using service: {self._srv_name}")
         self.get_logger().info(f"Initial target: {self._target:.2f} deg  | step={self._step} deg  speed={self._speed} dps  interval={self._interval} ms")
+
+        # Subscribe to safety status
+        self.safety_sub = self.create_subscription(String, 'safety/status', self._safety_callback, 10)
+        self.safety_status = 'OK'
 
     def _clamp(self, v: float) -> float:
         return max(self._min_deg, min(self._max_deg, v))
@@ -63,6 +73,66 @@ class ServoTurnCLI(Node):
         # 右转=目标角度增加 step（基于目标而非当前位置）
         return self.set_target(self._target + self._step)
 
+    def _safety_callback(self, msg):
+        self.safety_status = msg.data
+
+    def set_forward(self):
+        self.get_logger().info("前进")
+
+    def set_backward(self):
+        self.get_logger().info("后退")
+
+    def set_stop(self):
+        self.get_logger().info("停止")
+
+
+@app.route('/')
+def index():
+    return '''
+    <html>
+    <head><title>Servo Controller</title></head>
+    <body>
+    <h1>Servo Controller</h1>
+    <button onclick="send('forward')">前进</button>
+    <button onclick="send('backward')">后退</button>
+    <button onclick="send('stop')">停止</button>
+    <button onclick="send('left')">左转</button>
+    <button onclick="send('right')">右转</button>
+    <script>
+    function send(action) {
+        fetch('/move', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: action})
+        });
+    }
+    </script>
+    </body>
+    </html>
+    '''
+
+@app.route('/move', methods=['POST'])
+def move():
+    global node_global
+    if not node_global:
+        return jsonify(status="error", message="node not ready")
+    action = request.json.get('action')
+    if action == 'forward':
+        if node_global.safety_status == 'OK':
+            node_global.set_forward()
+        else:
+            node_global.set_stop()
+            node_global.get_logger().warn(f"前进时检测到不安全状态: {node_global.safety_status}")
+    elif action == 'backward':
+        node_global.set_backward()
+    elif action == 'stop':
+        node_global.set_stop()
+    elif action == 'left':
+        node_global.left()
+    elif action == 'right':
+        node_global.right()
+    return jsonify(status="ok")
+
 
 def main(argv: Optional[list] = None):
     parser = argparse.ArgumentParser(description='Servo turn CLI using SetAngleWithSpeed (preemptive via target updates).')
@@ -88,30 +158,16 @@ def main(argv: Optional[list] = None):
         max_deg=args.max_deg,
     )
     
+    global node_global
+    node_global = node
+    
     node.set_target(args.init_target)
 
+    flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000), daemon=True)
+    flask_thread.start()
+
     try:
-        if args.once:
-            if args.once == 'left':
-                node.left()
-            elif args.once == 'right':
-                node.right()
-            elif args.once == 'center':
-                node.set_target(args.init_target)
-        else:
-            print("\nControls: l=left  r=right  c=center  q=quit\n")
-            while rclpy.ok():
-                ch = input('> ').strip().lower()
-                if ch == 'l':
-                    node.left()
-                elif ch == 'r':
-                    node.right()
-                elif ch == 'c':
-                    node.set_target(args.init_target)
-                elif ch == 'q':
-                    break
-                else:
-                    print("Enter l/r/c/q")
+        rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
