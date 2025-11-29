@@ -41,6 +41,8 @@ class ServoTurnCLI(Node):
         self.safety_sub = self.create_subscription(String, 'safety/status', self._safety_callback, 10)
         self.safety_status = 'OK'
         self.last_safety_status = 'OK'
+        self.enable_safety_stop = True  # Default to enabled
+        self.auto_follow_mode = False  # Initialize auto follow mode
 
         # Parameter client for balance_controller
         self.param_client = self.create_client(SetParameters, '/balance_controller/set_parameters')
@@ -86,8 +88,12 @@ class ServoTurnCLI(Node):
         if msg.data != self.last_safety_status:
             self.last_safety_status = msg.data
             if msg.data != 'OK':
-                self.set_stop()
-                self.get_logger().warn(f"检测到不安全状态: {msg.data}，已自动停止")
+                if self.enable_safety_stop or self.auto_follow_mode:
+                    self.set_stop()
+                self.get_logger().warn(f"检测到不安全状态: {msg.data}，{'已自动停止' if self.enable_safety_stop else '未停止（安全停止已禁用）'}")
+            elif msg.data == 'OK' and self.auto_follow_mode:
+                self.set_forward()
+                self.get_logger().info("安全状态恢复，继续前进")
 
     def _set_march_velocity(self, velocity: float):
         if not self.param_client.wait_for_service(timeout_sec=1.0):
@@ -120,7 +126,20 @@ class ServoTurnCLI(Node):
         self._set_march_velocity(-self._march_speed)
 
     def set_stop(self):
+        self.auto_follow_mode = False
         self._set_march_velocity(0.0)
+
+    def set_safety_stop_enabled(self, enabled: bool):
+        self.enable_safety_stop = enabled
+        self.get_logger().info(f"安全停止已{'启用' if enabled else '禁用'}")
+
+    def start_auto_follow(self):
+        if self.safety_status == 'OK':
+            self.auto_follow_mode = True
+            self.set_forward()
+            self.get_logger().info("开始自动跟随模式")
+        else:
+            self.get_logger().warn("安全状态不佳，无法开始自动跟随")
 
 
 @app.route('/')
@@ -130,9 +149,14 @@ def index():
     <head><title>Servo Controller</title></head>
     <body>
     <h1>Servo Controller</h1>
+    <div>
+        <input type="checkbox" id="safetyStop" checked onchange="setSafetyStop(this.checked)">
+        <label for="safetyStop">启用安全停止</label>
+    </div>
     <button onclick="send('forward')">前进</button>
     <button onclick="send('backward')">后退</button>
     <button onclick="send('stop')">停止</button>
+    <button onclick="send('auto_follow')" style="background-color: green; color: white;">自动跟随</button>
     <button onclick="send('left')">左转</button>
     <button onclick="send('right')">右转</button>
     <script>
@@ -141,6 +165,13 @@ def index():
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({action: action})
+        });
+    }
+    function setSafetyStop(enabled) {
+        fetch('/set_safety_stop', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: enabled})
         });
     }
     </script>
@@ -164,6 +195,17 @@ def move():
         node_global.left()
     elif action == 'right':
         node_global.right()
+    elif action == 'auto_follow':
+        node_global.start_auto_follow()
+    return jsonify(status="ok")
+
+@app.route('/set_safety_stop', methods=['POST'])
+def set_safety_stop():
+    global node_global
+    if not node_global:
+        return jsonify(status="error", message="node not ready")
+    enabled = request.json.get('enabled', True)
+    node_global.set_safety_stop_enabled(enabled)
     return jsonify(status="ok")
 
 
