@@ -3,6 +3,11 @@ import argparse
 import sys
 import threading
 from typing import Optional
+import os
+import tempfile
+import speech_recognition as sr
+import time
+import traceback
 
 import rclpy
 from rclpy.node import Node
@@ -16,8 +21,23 @@ from rcl_interfaces.msg import Parameter, ParameterValue
 from rcl_interfaces.msg import ParameterType
 
 
+
+try:
+    from chat_api import DoubaoChatBot
+except ImportError:
+    print("Warning: Could not import DoubaoChatBot. Voice features will be disabled.")
+    DoubaoChatBot = object
+
+
 app = Flask(__name__)
 node_global: 'Optional[ServoTurnCLI]' = None
+chatbot_global = None  # 全局变量存储 chatbot 实例
+
+DEBUG = True
+
+def dbg(msg: str):
+    if DEBUG:
+        print(f"[speech_turn_cli][{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
 
 class ServoTurnCLI(Node):
@@ -145,47 +165,21 @@ class ServoTurnCLI(Node):
 
 @app.route('/')
 def index():
-    return '''
-    <html>
-    <head><title>Servo Controller</title></head>
-    <body>
-    <h1>Servo Controller</h1>
-    <div>
-        <input type="checkbox" id="safetyStop" checked onchange="setSafetyStop(this.checked)">
-        <label for="safetyStop">启用安全停止</label>
-    </div>
-    <button onclick="send('forward')">前进</button>
-    <button onclick="send('backward')">后退</button>
-    <button onclick="send('stop')">停止</button>
-    <button onclick="send('auto_follow')" style="background-color: green; color: white;">自动跟随</button>
-    <button onclick="send('left')">左转</button>
-    <button onclick="send('right')">右转</button>
-    <script>
-    function send(action) {
-        fetch('/move', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({action: action})
-        });
-    }
-    function setSafetyStop(enabled) {
-        fetch('/set_safety_stop', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({enabled: enabled})
-        });
-    }
-    </script>
-    </body>
-    </html>
-    '''
+    try:
+        with open(os.path.join(os.path.dirname(__file__), "index.html"), "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        dbg(f"Failed to load index.html: {e}")
+        return "<h1>index.html not found</h1>"
 
 @app.route('/move', methods=['POST'])
 def move():
+    data = request.get_json(silent=True) or {}
+    action = data.get("action")
+    dbg(f"/move called, action={action}")
     global node_global
     if not node_global:
         return jsonify(status="error", message="node not ready")
-    action = request.json.get('action')
     if action == 'forward':
         node_global.set_forward()
     elif action == 'backward':
@@ -199,16 +193,112 @@ def move():
         node_global.right()
     elif action == 'auto_follow':
         node_global.start_auto_follow()
+    dbg(f"/move done, action={action}")
     return jsonify(status="ok")
 
 @app.route('/set_safety_stop', methods=['POST'])
 def set_safety_stop():
+    data = request.get_json(silent=True) or {}
+    enabled = data.get("enabled")
+    dbg(f"/set_safety_stop called, enabled={enabled}")
     global node_global
     if not node_global:
         return jsonify(status="error", message="node not ready")
     enabled = request.json.get('enabled', True)
     node_global.set_safety_stop_enabled(enabled)
+    dbg(f"/set_safety_stop done, enabled={enabled}")
     return jsonify(status="ok")
+
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    global chatbot_global
+    if not chatbot_global:
+        return jsonify(status="error", message="Chatbot not initialized")
+    
+    if 'audio' not in request.files:
+        return jsonify(status="error", message="No audio file")
+        
+    audio_file = request.files['audio']
+    
+    # 保存临时文件
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        audio_file.save(tmp.name)
+        tmp_path = tmp.name
+
+    try:
+        # 1. 语音转文字
+        text = chatbot_global.recognize_audio_file(tmp_path)
+        if not text:
+            return jsonify(status="error", message="Recognition failed")
+
+        # 2. LLM 思考与动作解析
+        reply_text, action = chatbot_global.run_gpt(text)
+
+        # 3. 执行动作
+        if action:
+            chatbot_global._handle_action(action)
+
+        # 4. 文字转语音 (自行车端播放)
+        # 注意：这会在服务器(自行车)上播放声音
+        chatbot_global._text_to_voice(reply_text)
+
+        return jsonify(status="ok", reply=reply_text, action=action)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+class WebDoubaoChatBot(DoubaoChatBot):
+    def __init__(self, node, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.node_ref = node  # 持有 ROS2 节点的引用
+
+    def recognize_audio_file(self, audio_path):
+        try:
+            import os
+            size = os.path.getsize(audio_path) if os.path.exists(audio_path) else -1
+            dbg(f"recognize_audio_file path={audio_path}, size={size}, asr_type={getattr(self, 'asr_type', None)}")
+        except Exception:
+            pass
+
+        transcript = ""
+        try:
+            if self.asr_type == "whisper":
+                with sr.AudioFile(audio_path) as source:
+                    audio_data = self.voice_recognizer.record(source)
+                transcript = self.voice_recognizer.recognize_whisper(
+                    audio_data, self.whisper_model_type
+                )
+            elif self.asr_type == "funasr":
+                transcript = self.funasr_client.recognize(audio_path)
+            
+            dbg(f"You said: {transcript!r}")
+            return transcript
+        except Exception as e:
+            print(f"Recognition error: {e}")
+            return None
+
+    def _handle_action(self, action):
+        dbg(f"_handle_action action={action!r}")
+        """重写动作执行逻辑，调用 ROS2 节点方法"""
+        if not self.node_ref:
+            return
+        print(f"Executing action: {action}")
+        if action == 'forward':
+            self.node_ref.set_forward()
+        elif action in ['back', 'backward']:
+            self.node_ref.set_backward()
+        elif action == 'stop':
+            self.node_ref.set_stop()
+            self.node_ref.auto_follow_mode = False
+        elif action == 'left':
+            self.node_ref.left()
+        elif action == 'right':
+            self.node_ref.right()
+        elif action == 'follow':
+            self.node_ref.start_auto_follow()
+        dbg(f"_handle_action done action={action!r}")
 
 
 def main(argv: Optional[list] = None):
@@ -223,6 +313,11 @@ def main(argv: Optional[list] = None):
     parser.add_argument('--march-speed', type=float, default=0.3, help='March speed for forward/backward')
     parser.add_argument('--once', choices=['left', 'right', 'center'], help='Send a single command then exit')
 
+    # 添加 ChatBot 相关参数
+    parser.add_argument("--api-key", type=str, default=os.environ.get("ARK_API_KEY"), help="Doubao API Key")
+    parser.add_argument("--base-url", type=str, default="https://ark.cn-beijing.volces.com/api/v3", help="Doubao Base URL")
+    parser.add_argument("-m", "--model-name", type=str, default="doubao-seed-1-6-flash-250828", help="Doubao Model Name")
+    
     args = parser.parse_args(argv)
 
     rclpy.init()
@@ -242,6 +337,21 @@ def main(argv: Optional[list] = None):
     
     node.set_target(args.init_target)
 
+    # 初始化 ChatBot
+    global chatbot_global
+    if args.api_key:
+        chatbot_global = WebDoubaoChatBot(
+            node=node,
+            api_key=args.api_key,
+            base_url=args.base_url,
+            model_name=args.model_name,
+            asr_type="funasr",
+            tts_type="qwen",
+            mic_index=0
+        )
+    else:
+        print("Warning: No API Key provided, voice chat disabled.")
+
     flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000), daemon=True)
     flask_thread.start()
 
@@ -256,3 +366,7 @@ def main(argv: Optional[list] = None):
 
 if __name__ == '__main__':
     main()
+
+dbg("System ready. Web controller started.")
+dbg(f"api_key set: {bool(args.api_key)} model={args.model_name} base_url={args.base_url}")
+dbg(f"servo service={args.service} step={args.step} speed={args.speed} interval={args.interval}")

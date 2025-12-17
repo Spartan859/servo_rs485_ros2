@@ -1,0 +1,94 @@
+<html>
+
+<head>
+    <title>Servo Controller</title>
+</head>
+
+<body>
+    <h1>Servo Controller</h1>
+    <div>
+        <input type="checkbox" id="safetyStop" checked onchange="setSafetyStop(this.checked)">
+        <label for="safetyStop">启用安全停止</label>
+    </div>
+    <button onclick="send('forward')">前进</button>
+    <button onclick="send('backward')">后退</button>
+    <button onclick="send('stop')">停止</button>
+    <button onclick="send('auto_follow')" style="background-color: green; color: white;">自动跟随</button>
+    <button onclick="send('left')">左转</button>
+    <button onclick="send('right')">右转</button>
+    <!-- 在按钮区域添加 -->
+    <div style="margin-top: 20px; border-top: 1px solid #ccc; padding-top: 10px;">
+        <h3>语音控制</h3>
+        <button id="recordBtn" onmousedown="startRecording()" onmouseup="stopRecording()"
+            ontouchstart="startRecording()" ontouchend="stopRecording()"
+            style="background-color: #007bff; color: white; padding: 15px; border-radius: 50%; width: 80px; height: 80px;">按住<br>说话</button>
+        <p id="statusText">准备就绪</p>
+    </div>
+    <script>
+        function send(action) {
+            fetch('/move', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: action })
+            });
+        }
+        function setSafetyStop(enabled) {
+            fetch('/set_safety_stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled })
+            });
+        }
+
+        let mediaRecorder;
+        let audioChunks = [];
+
+        async function startRecording() {
+            document.getElementById('statusText').innerText = "正在录音...";
+            document.getElementById('recordBtn').style.backgroundColor = "red";
+
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+
+            mediaRecorder.ondataavailable = event => {
+                audioChunks.push(event.data);
+            };
+
+            mediaRecorder.onstop = async () => {
+                document.getElementById('statusText').innerText = "正在发送...";
+                document.getElementById('recordBtn').style.backgroundColor = "#007bff";
+
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                const formData = new FormData();
+                formData.append('audio', audioBlob, 'recording.wav');
+
+                try {
+                    const response = await fetch('/chat', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await response.json();
+                    if (data.status === 'ok') {
+                        document.getElementById('statusText').innerText = "回复: " + data.reply;
+                    } else {
+                        document.getElementById('statusText').innerText = "错误: " + data.message;
+                    }
+                } catch (e) {
+                    console.error(e);
+                    document.getElementById('statusText').innerText = "发送失败";
+                }
+            };
+
+            mediaRecorder.start();
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+        }
+    </script>
+</body>
+
+</html>
