@@ -40,53 +40,35 @@
             });
         }
 
-        let mediaRecorder;
-        let audioChunks = [];
-
+        // 本地录音改为由服务器端执行：前端只触发后端开始本地录音并返回结果。
         async function startRecording() {
-            document.getElementById('statusText').innerText = "正在录音...";
+            document.getElementById('statusText').innerText = "正在触发本地录音...";
             document.getElementById('recordBtn').style.backgroundColor = "red";
 
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream);
-            audioChunks = [];
-
-            mediaRecorder.ondataavailable = event => {
-                audioChunks.push(event.data);
-            };
-
-            mediaRecorder.onstop = async () => {
-                document.getElementById('statusText').innerText = "正在发送...";
-                document.getElementById('recordBtn').style.backgroundColor = "#007bff";
-
-                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                const formData = new FormData();
-                formData.append('audio', audioBlob, 'recording.wav');
-
-                try {
-                    const response = await fetch('/chat', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    const data = await response.json();
-                    if (data.status === 'ok') {
-                        document.getElementById('statusText').innerText = "回复: " + data.reply;
-                    } else {
-                        document.getElementById('statusText').innerText = "错误: " + data.message;
-                    }
-                } catch (e) {
-                    console.error(e);
-                    document.getElementById('statusText').innerText = "发送失败";
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'record', duration: 5 })
+                });
+                const data = await response.json();
+                if (data.status === 'ok') {
+                    document.getElementById('statusText').innerText = data.message || '已触发录音';
+                } else {
+                    document.getElementById('statusText').innerText = "错误: " + (data.message || 'unknown');
                 }
-            };
-
-            mediaRecorder.start();
+            } catch (e) {
+                console.error(e);
+                document.getElementById('statusText').innerText = "触发失败";
+            } finally {
+                document.getElementById('recordBtn').style.backgroundColor = "#007bff";
+            }
         }
 
         function stopRecording() {
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                mediaRecorder.stop();
-            }
+            // 前端不再负责停止录音；录音在后端按 duration 自动完成。
+            document.getElementById('statusText').innerText = "停止（由服务器控制）";
+            document.getElementById('recordBtn').style.backgroundColor = "#007bff";
         }
     </script>
 </body>

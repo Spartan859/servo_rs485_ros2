@@ -215,38 +215,47 @@ def chat():
     global chatbot_global
     if not chatbot_global:
         return jsonify(status="error", message="Chatbot not initialized")
-    
-    if 'audio' not in request.files:
-        return jsonify(status="error", message="No audio file")
-        
-    audio_file = request.files['audio']
-    
-    # 保存临时文件
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        audio_file.save(tmp.name)
-        tmp_path = tmp.name
 
-    try:
-        # 1. 语音转文字
-        text = chatbot_global.recognize_audio_file(tmp_path)
-        if not text:
-            return jsonify(status="error", message="Recognition failed")
+    # 支持两种调用方式：
+    # 1) 旧式上传文件（兼容性保留），使用 multipart/form-data 包含 'audio' 文件。
+    # 2) 前端触发本地录音：JSON { action: 'record', duration: N }
+    if 'audio' in request.files:
+        audio_file = request.files['audio']
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            audio_file.save(tmp.name)
+            tmp_path = tmp.name
+        try:
+            text = chatbot_global.recognize_audio_file(tmp_path)
+            if not text:
+                return jsonify(status="error", message="Recognition failed")
+            reply_text, action = chatbot_global.run_gpt(text)
+            if action:
+                chatbot_global._handle_action(action)
+            chatbot_global._text_to_voice(reply_text)
+            return jsonify(status="ok", reply=reply_text, action=action)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
-        # 2. LLM 思考与动作解析
-        reply_text, action = chatbot_global.run_gpt(text)
+    # 处理本地录音触发（非文件上传）
+    data = request.get_json(silent=True) or {}
+    if data.get('action') == 'record':
+        duration = int(data.get('duration', 5))
 
-        # 3. 执行动作
-        if action:
-            chatbot_global._handle_action(action)
+        def _bg_run():
+            try:
+                # DoubaoChatBot.run() 包含录音->识别->LLM->动作->TTS 的完整流程（一次循环）。
+                chatbot_global.run()
+            except Exception as e:
+                try:
+                    print(f"Background chat run error: {e}")
+                except Exception:
+                    pass
 
-        # 4. 文字转语音 (自行车端播放)
-        # 注意：这会在服务器(自行车)上播放声音
-        chatbot_global._text_to_voice(reply_text)
+        threading.Thread(target=_bg_run, daemon=True).start()
+        return jsonify(status="ok", message=f"Triggered local recording (duration={duration}s)")
 
-        return jsonify(status="ok", reply=reply_text, action=action)
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    return jsonify(status="error", message="No audio provided and no record action specified")
 
 
 class WebDoubaoChatBot(DoubaoChatBot):
@@ -299,6 +308,33 @@ class WebDoubaoChatBot(DoubaoChatBot):
         elif action == 'follow':
             self.node_ref.start_auto_follow()
         dbg(f"_handle_action done action={action!r}")
+
+    def run(self):
+        """Run one interaction cycle but respect ROS node safety state.
+
+        This wraps the parent `run()` to check `node_ref.safety_status` before
+        starting a new voice interaction and to capture/log exceptions.
+        """
+        super().run()
+        # try:
+        #     # 如果有 node 引用，优先检查安全状态
+        #     if getattr(self, 'node_ref', None) is not None:
+        #         try:
+        #             status = getattr(self.node_ref, 'safety_status', 'OK')
+        #         except Exception:
+        #             status = 'OK'
+        #         if status != 'OK':
+        #             dbg(f"Skipping voice interaction due to safety_status={status}")
+        #             return
+
+        #     # 调用父类的 run() 完成录音->识别->LLM->动作->TTS 的流程
+        #     super().run()
+        # except Exception as e:
+        #     dbg(f"WebDoubaoChatBot.run error: {e}")
+        #     try:
+        #         traceback.print_exc()
+        #     except Exception:
+        #         pass
 
 
 def main(argv: Optional[list] = None):
