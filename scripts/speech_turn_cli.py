@@ -95,11 +95,11 @@ class ServoTurnCLI(Node):
         self.get_logger().info(f"New target set to {self._target:.2f} deg")
         return True
 
-    def left(self) -> bool:
+    def right(self) -> bool:
         # 左转=目标角度减少 step（基于目标而非当前位置）
         return self.set_target(self._target - self._step)
 
-    def right(self) -> bool:
+    def left(self) -> bool:
         # 右转=目标角度增加 step（基于目标而非当前位置）
         return self.set_target(self._target + self._step)
 
