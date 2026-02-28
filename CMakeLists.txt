@@ -9,7 +9,12 @@ find_package(rosidl_default_generators REQUIRED)
 
 include_directories(include)
 
-add_executable(servo_node src/servo_node.cpp src/servo_rs485.cpp)
+# 添加所有舵机源文件（RS485 + PWM）
+add_executable(servo_node 
+  src/servo_node.cpp 
+  src/servo_rs485.cpp
+  src/servo_pwm.cpp
+)
 ament_target_dependencies(servo_node rclcpp std_msgs)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
