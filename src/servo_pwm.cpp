@@ -53,20 +53,21 @@ bool ServoPWM::initPWM() {
         return false;
     }
 
-    // 3. 设置 PWM 低电平开始时刻为 0
-    if (!writeRegister(reg_low_addr_, 0)) {
+    // 3. 设置 PWM 高电平从 0 开始
+    if (!writeRegister(reg_high_addr_, 0)) {
         RCLCPP_ERROR(rclcpp::get_logger("ServoPWM"), 
-                     "Failed to set PWM low start at 0x%llX", 
-                     static_cast<unsigned long long>(reg_low_addr_));
+                     "Failed to set PWM high start at 0x%llX", 
+                     static_cast<unsigned long long>(reg_high_addr_));
         return false;
     }
 
     // 4. 设置初始角度为 0 度（中间位置）
+    // 低电平从 duty 值开始，这样占空比 = duty / period
     uint32_t center_duty = degreeToDuty(0.0);
-    if (!writeRegister(reg_high_addr_, center_duty)) {
+    if (!writeRegister(reg_low_addr_, center_duty)) {
         RCLCPP_ERROR(rclcpp::get_logger("ServoPWM"), 
                      "Failed to set initial PWM duty at 0x%llX", 
-                     static_cast<unsigned long long>(reg_high_addr_));
+                     static_cast<unsigned long long>(reg_low_addr_));
         return false;
     }
 
@@ -159,7 +160,7 @@ bool ServoPWM::ping() {
     }
     
     uint32_t dummy;
-    return readRegister(reg_high_addr_, dummy);
+    return readRegister(reg_low_addr_, dummy);
 }
 
 void ServoPWM::setAngle(double degree, int time_ms) {
@@ -172,7 +173,8 @@ void ServoPWM::setAngle(double degree, int time_ms) {
     }
     
     uint32_t duty = degreeToDuty(degree);
-    if (writeRegister(reg_high_addr_, duty)) {
+    // 写入低电平开始寄存器，占空比 = duty / period
+    if (writeRegister(reg_low_addr_, duty)) {
         last_angle_ = clampDegree(degree);
         RCLCPP_DEBUG(rclcpp::get_logger("ServoPWM"), 
                      "Set angle: %.2f deg -> duty: %u", degree, duty);
@@ -188,7 +190,8 @@ double ServoPWM::getAngle() {
     }
     
     uint32_t duty;
-    if (readRegister(reg_high_addr_, duty)) {
+    // 从低电平开始寄存器读取当前占空比
+    if (readRegister(reg_low_addr_, duty)) {
         last_angle_ = dutyToDegree(duty);
     }
     return last_angle_;
