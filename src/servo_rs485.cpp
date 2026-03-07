@@ -8,6 +8,7 @@
 #include <chrono>
 #include <thread>
 
+// RS485 协议常量
 #define HEADER1 0x12
 #define HEADER2 0x4C
 #define CMD_PING 0x01
@@ -15,17 +16,18 @@
 #define CMD_WRITE_DATA 0x03
 #define ADDR_SET_POSITION_TIME 0x2A
 #define ADDR_GET_POSITION 0x38
-#define SERVO_MIN_POSITION 0
-#define SERVO_MAX_POSITION 4096
-#define SERVO_MIN_DEGREE -135.0
-#define SERVO_MAX_DEGREE 135.0
 
-Servo::Servo(const std::string& port, int servo_id, int baudrate, double timeout)
-    : port_(port), servo_id_(servo_id), baudrate_(baudrate), timeout_(timeout), fd_(-1), last_angle_(0.0) {
+ServoRS485::ServoRS485(const std::string& port, int servo_id, int baudrate, double timeout)
+    : port_(port), servo_id_(servo_id), baudrate_(baudrate), timeout_(timeout), fd_(-1) {
+    last_angle_ = 0.0;
     openPort();
 }
 
-bool Servo::openPort() {
+ServoRS485::~ServoRS485() {
+    closePort();
+}
+
+bool ServoRS485::openPort() {
     fd_ = open(port_.c_str(), O_RDWR | O_NOCTTY | O_SYNC);
     if (fd_ < 0) return false;
     struct termios tty;
@@ -48,18 +50,18 @@ bool Servo::openPort() {
     return true;
 }
 
-void Servo::closePort() {
+void ServoRS485::closePort() {
     if (fd_ >= 0) close(fd_);
     fd_ = -1;
 }
 
-uint8_t Servo::calculateChecksum(const uint8_t* data, size_t len) {
+uint8_t ServoRS485::calculateChecksum(const uint8_t* data, size_t len) {
     int sum = 0;
     for (size_t i = 0; i < len; ++i) sum += data[i];
     return (~sum) & 0xFF;
 }
 
-bool Servo::sendCommand(const uint8_t* data, size_t len, uint8_t* response, size_t& resp_len) {
+bool ServoRS485::sendCommand(const uint8_t* data, size_t len, uint8_t* response, size_t& resp_len) {
     if (fd_ < 0) return false;
     std::lock_guard<std::mutex> lock(io_mutex_);
     // 清理可能的残留输入，避免前一条指令的回响干扰
@@ -97,7 +99,7 @@ bool Servo::sendCommand(const uint8_t* data, size_t len, uint8_t* response, size
     return resp_len > 0;
 }
 
-bool Servo::ping() {
+bool ServoRS485::ping() {
     uint8_t cmd[6];
     cmd[0] = HEADER1;
     cmd[1] = HEADER2;
@@ -110,7 +112,7 @@ bool Servo::ping() {
     return sendCommand(cmd, 6, resp, resp_len);
 }
 
-void Servo::setAngle(double degree, int time_ms) {
+void ServoRS485::setAngle(double degree, int time_ms) {
     int position = degreeToPosition(degree);
     int time_val = std::min(time_ms << 2, 0xFFFF);
     uint8_t data_to_write[4];
@@ -132,7 +134,7 @@ void Servo::setAngle(double degree, int time_ms) {
     sendCommand(cmd, 11, resp, resp_len);
 }
 
-double Servo::getAngle() {
+double ServoRS485::getAngle() {
     uint8_t cmd[8];
     cmd[0] = HEADER1;
     cmd[1] = HEADER2;
@@ -175,11 +177,11 @@ double Servo::getAngle() {
     return last_angle_; // 通信失败，返回旧值
 }
 
-double Servo::currentDegree() {
+double ServoRS485::currentDegree() {
     return getAngle();
 }
 
-void Servo::setAngleWithSpeed(double target_degree, double speed_dps, int step_interval_ms, std::atomic<bool>* cancel) {
+void ServoRS485::setAngleWithSpeed(double target_degree, double speed_dps, int step_interval_ms, std::atomic<bool>* cancel) {
     if (speed_dps <= 0.0) { // fallback: direct set
         setAngle(target_degree, step_interval_ms);
         last_angle_ = target_degree;
@@ -215,15 +217,15 @@ void Servo::setAngleWithSpeed(double target_degree, double speed_dps, int step_i
     last_angle_ = target_degree;
 }
 
-int Servo::degreeToPosition(double degree) {
-    degree = std::max(std::min(degree, SERVO_MAX_DEGREE), SERVO_MIN_DEGREE);
+int ServoRS485::degreeToPosition(double degree) {
+    degree = clampDegree(degree);
     double pos_range = SERVO_MAX_POSITION - SERVO_MIN_POSITION;
     double deg_range = SERVO_MAX_DEGREE - SERVO_MIN_DEGREE;
     double position = SERVO_MIN_POSITION + ((degree - SERVO_MIN_DEGREE) / deg_range) * pos_range;
     return static_cast<int>(position);
 }
 
-double Servo::positionToDegree(int position) {
+double ServoRS485::positionToDegree(int position) {
     position = std::max(std::min(position, SERVO_MAX_POSITION), SERVO_MIN_POSITION);
     double pos_range = SERVO_MAX_POSITION - SERVO_MIN_POSITION;
     double deg_range = SERVO_MAX_DEGREE - SERVO_MIN_DEGREE;
